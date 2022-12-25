@@ -1,6 +1,11 @@
 import mediasoup from "mediasoup";
 import { mediaCodecs } from "../config.js";
 import {
+  addConsumer,
+  getConsumer,
+  removeConsumerBySocketId,
+} from "./consumer.js";
+import {
   addPeerConsumer,
   addPeerProducer,
   addPeerTransport,
@@ -33,7 +38,6 @@ import {
  *         |-> Consumer
  **/
 let worker;
-let consumers = []; // [ { socketId1, roomName1, consumer, }, ... ]
 
 const createWorker = async () => {
   worker = await mediasoup.createWorker({
@@ -60,22 +64,11 @@ export const handleConnect = async (socket) => {
     socketId: socket.id,
   });
 
-  const removeItems = (items, socketId, type) => {
-    items.forEach((item) => {
-      if (item.socketId === socket.id) {
-        item[type].close();
-      }
-    });
-    items = items.filter((item) => item.socketId !== socket.id);
-
-    return items;
-  };
-
   socket.on("disconnect", () => {
     // do some cleanup
     console.log("peer disconnected");
-    consumers = removeItems(consumers, socket.id, "consumer");
 
+    removeConsumerBySocketId(socket.id);
     removeProducerBySocketId(socket.id);
     removeTransportBySocketId(socket.id);
 
@@ -166,10 +159,8 @@ export const handleConnect = async (socket) => {
     addPeerProducer(socket, producer);
   };
 
-  const addConsumer = (consumer, roomName) => {
-    // add the consumer to the consumers list
-    consumers = [...consumers, { socketId: socket.id, consumer, roomName }];
-
+  const onConsume = (consumer, roomName) => {
+    addConsumer(socket.id, consumer, roomName);
     addPeerConsumer(socket, consumer);
   };
 
@@ -292,13 +283,10 @@ export const handleConnect = async (socket) => {
 
             removeTransportByTransportId(consumerTransport.transport.id);
 
-            consumer.close();
-            consumers = consumers.filter(
-              (consumerData) => consumerData.consumer.id !== consumer.id
-            );
+            removeConsumer(consumer);
           });
 
-          addConsumer(consumer, roomName);
+          onConsume(consumer, roomName);
 
           // from the consumer extract the following params
           // to send back to the Client
@@ -326,9 +314,7 @@ export const handleConnect = async (socket) => {
 
   socket.on("consumer-resume", async ({ serverConsumerId }) => {
     console.log("consumer resume");
-    const { consumer } = consumers.find(
-      (consumerData) => consumerData.consumer.id === serverConsumerId
-    );
+    const { consumer } = getConsumer(serverConsumerId);
     await consumer.resume();
   });
 };
