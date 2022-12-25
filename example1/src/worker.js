@@ -1,5 +1,13 @@
 import mediasoup from "mediasoup";
 import { mediaCodecs } from "../config.js";
+import {
+  addPeerConsumer,
+  addPeerProducer,
+  addPeerTransport,
+  deletePeer,
+  getPeer,
+  joinPeer,
+} from "./peer.js";
 import { getRoomByName, removeSocketFromRoom, setRoom } from "./room.js";
 
 /**
@@ -11,7 +19,6 @@ import { getRoomByName, removeSocketFromRoom, setRoom } from "./room.js";
  *         |-> Consumer
  **/
 let worker;
-let peers = {}; // { socketId1: { roomName1, socket, transports = [id1, id2,] }, producers = [id1, id2,] }, consumers = [id1, id2,], peerDetails }, ...}
 let transports = []; // [ { socketId1, roomName1, transport, consumer }, ... ]
 let producers = []; // [ { socketId1, roomName1, producer, }, ... ]
 let consumers = []; // [ { socketId1, roomName1, consumer, }, ... ]
@@ -59,10 +66,10 @@ export const handleConnect = async (socket) => {
     producers = removeItems(producers, socket.id, "producer");
     transports = removeItems(transports, socket.id, "transport");
 
-    if (peers[socket.id]) {
-      const { roomName } = peers[socket.id];
-      delete peers[socket.id];
-
+    const peer = getPeer(socket.id);
+    if (peer !== undefined) {
+      const { roomName } = peer;
+      deletePeer(socket.id);
       removeSocketFromRoom(socket, roomName);
     }
   });
@@ -72,17 +79,7 @@ export const handleConnect = async (socket) => {
     // const router1 = rooms[roomName] && rooms[roomName].get('data').router || await createRoom(roomName, socket.id)
     const router1 = await createRoom(roomName, socket.id);
     console.log("JOIN ROOM: ", roomName);
-    peers[socket.id] = {
-      socket,
-      roomName, // Name for the Router this Peer joined
-      transports: [],
-      producers: [],
-      consumers: [],
-      peerDetails: {
-        name: "",
-        isAdmin: false, // Is this Peer the Admin?
-      },
-    };
+    joinPeer(socket, roomName);
 
     // get Router RTP Capabilities
     const rtpCapabilities = router1.rtpCapabilities;
@@ -121,7 +118,7 @@ export const handleConnect = async (socket) => {
   // We need to differentiate between the producer and consumer transports
   socket.on("createWebRtcTransport", async ({ consumer }, callback) => {
     // get Room Name from Peer's properties
-    const roomName = peers[socket.id].roomName;
+    const roomName = getPeer(socket.id).roomName;
 
     // get Router (Room) object this peer is in based on RoomName
     const router = getRoomByName(roomName).router;
@@ -152,35 +149,25 @@ export const handleConnect = async (socket) => {
       { socketId: socket.id, transport, roomName, consumer },
     ];
 
-    peers[socket.id] = {
-      ...peers[socket.id],
-      transports: [...peers[socket.id].transports, transport.id],
-    };
+    addPeerTransport(socket, transport);
   };
 
   const addProducer = (producer, roomName) => {
     producers = [...producers, { socketId: socket.id, producer, roomName }];
 
-    peers[socket.id] = {
-      ...peers[socket.id],
-      producers: [...peers[socket.id].producers, producer.id],
-    };
+    addPeerProducer(socket, producer);
   };
 
   const addConsumer = (consumer, roomName) => {
     // add the consumer to the consumers list
     consumers = [...consumers, { socketId: socket.id, consumer, roomName }];
 
-    // add the consumer id to the peers list
-    peers[socket.id] = {
-      ...peers[socket.id],
-      consumers: [...peers[socket.id].consumers, consumer.id],
-    };
+    addPeerConsumer(socket, consumer);
   };
 
   socket.on("getProducers", (callback) => {
     //return all producer transports
-    const { roomName } = peers[socket.id];
+    const { roomName } = getPeer(socket.id);
 
     let producerList = [];
     producers.forEach((producerData) => {
@@ -205,7 +192,7 @@ export const handleConnect = async (socket) => {
         producerData.socketId !== socketId &&
         producerData.roomName === roomName
       ) {
-        const producerSocket = peers[producerData.socketId].socket;
+        const producerSocket = getPeer(producerData.socketId).socket;
         // use socket to send producer id to producer
         producerSocket.emit("new-producer", { producerId: id });
       }
@@ -237,7 +224,7 @@ export const handleConnect = async (socket) => {
       });
 
       // add producer to the producers array
-      const { roomName } = peers[socket.id];
+      const { roomName } = getPeer(socket.id);
 
       addProducer(producer, roomName);
 
@@ -279,7 +266,7 @@ export const handleConnect = async (socket) => {
       callback
     ) => {
       try {
-        const { roomName } = peers[socket.id];
+        const { roomName } = getPeer(socket.id);
         const router = getRoomByName(roomName).router;
         let consumerTransport = transports.find(
           (transportData) =>
