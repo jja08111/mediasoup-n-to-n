@@ -9,6 +9,13 @@ import {
   joinPeer,
 } from "./peer.js";
 import { getRoomByName, removeSocketFromRoom, setRoom } from "./room.js";
+import {
+  addTransport,
+  findConsumerTrasport,
+  getTransport,
+  removeTransportBySocketId,
+  removeTransportByTransportId,
+} from "./transport.js";
 
 /**
  * Worker
@@ -19,7 +26,6 @@ import { getRoomByName, removeSocketFromRoom, setRoom } from "./room.js";
  *         |-> Consumer
  **/
 let worker;
-let transports = []; // [ { socketId1, roomName1, transport, consumer }, ... ]
 let producers = []; // [ { socketId1, roomName1, producer, }, ... ]
 let consumers = []; // [ { socketId1, roomName1, consumer, }, ... ]
 
@@ -64,7 +70,8 @@ export const handleConnect = async (socket) => {
     console.log("peer disconnected");
     consumers = removeItems(consumers, socket.id, "consumer");
     producers = removeItems(producers, socket.id, "producer");
-    transports = removeItems(transports, socket.id, "transport");
+
+    removeTransportBySocketId(socket.id);
 
     const peer = getPeer(socket.id);
     if (peer !== undefined) {
@@ -116,7 +123,7 @@ export const handleConnect = async (socket) => {
 
   // Client emits a request to create server side Transport
   // We need to differentiate between the producer and consumer transports
-  socket.on("createWebRtcTransport", async ({ consumer }, callback) => {
+  socket.on("createWebRtcTransport", async ({ isConsumer }, callback) => {
     // get Room Name from Peer's properties
     const roomName = getPeer(socket.id).roomName;
 
@@ -135,7 +142,7 @@ export const handleConnect = async (socket) => {
         });
 
         // add transport to Peer's properties
-        addTransport(transport, roomName, consumer);
+        onTransportCreated(transport, roomName, isConsumer);
       },
       (error) => {
         console.log(error);
@@ -143,12 +150,8 @@ export const handleConnect = async (socket) => {
     );
   });
 
-  const addTransport = (transport, roomName, consumer) => {
-    transports = [
-      ...transports,
-      { socketId: socket.id, transport, roomName, consumer },
-    ];
-
+  const onTransportCreated = (transport, roomName, isConsumer) => {
+    addTransport(socket.id, transport, roomName, isConsumer);
     addPeerTransport(socket, transport);
   };
 
@@ -199,13 +202,6 @@ export const handleConnect = async (socket) => {
     });
   };
 
-  const getTransport = (socketId) => {
-    const [producerTransport] = transports.filter(
-      (transport) => transport.socketId === socketId && !transport.consumer
-    );
-    return producerTransport.transport;
-  };
-
   // see client's socket.emit('transport-connect', ...)
   socket.on("transport-connect", ({ dtlsParameters }) => {
     console.log("DTLS PARAMS... ", { dtlsParameters });
@@ -250,10 +246,8 @@ export const handleConnect = async (socket) => {
     "transport-recv-connect",
     async ({ dtlsParameters, serverConsumerTransportId }) => {
       console.log(`DTLS PARAMS: ${dtlsParameters}`);
-      const consumerTransport = transports.find(
-        (transportData) =>
-          transportData.consumer &&
-          transportData.transport.id == serverConsumerTransportId
+      const consumerTransport = findConsumerTrasport(
+        serverConsumerTransportId
       ).transport;
       await consumerTransport.connect({ dtlsParameters });
     }
@@ -268,10 +262,8 @@ export const handleConnect = async (socket) => {
       try {
         const { roomName } = getPeer(socket.id);
         const router = getRoomByName(roomName).router;
-        let consumerTransport = transports.find(
-          (transportData) =>
-            transportData.consumer &&
-            transportData.transport.id == serverConsumerTransportId
+        const consumerTransport = findConsumerTrasport(
+          serverConsumerTransportId
         ).transport;
         const canConsume = router.canConsume({
           producerId: remoteProducerId,
@@ -297,11 +289,8 @@ export const handleConnect = async (socket) => {
             console.log("producer of consumer closed");
             socket.emit("producer-closed", { remoteProducerId });
 
-            consumerTransport.close([]);
-            transports = transports.filter(
-              (transportData) =>
-                transportData.transport.id !== consumerTransport.id
-            );
+            removeTransportByTransportId(consumerTransport.transport.id);
+
             consumer.close();
             consumers = consumers.filter(
               (consumerData) => consumerData.consumer.id !== consumer.id

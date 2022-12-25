@@ -120,7 +120,7 @@ const createDevice = async () => {
 const createSendTransport = () => {
   // see server's socket.on('createWebRtcTransport', sender?, ...)
   // this is a call from Producer, so sender = true
-  socket.emit("createWebRtcTransport", { consumer: false }, ({ params }) => {
+  socket.emit("createWebRtcTransport", { isConsumer: false }, ({ params }) => {
     // The server sends back params needed
     // to create Send Transport on the client side
     if (params.error) {
@@ -230,7 +230,7 @@ const signalNewConsumerTransport = async (remoteProducerId) => {
 
   await socket.emit(
     "createWebRtcTransport",
-    { consumer: true },
+    { isConsumer: true },
     ({ params }) => {
       // The server sends back params needed
       // to create Send Transport on the client side
