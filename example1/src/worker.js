@@ -129,24 +129,23 @@ export const handleConnect = async (socket) => {
     // get Router (Room) object this peer is in based on RoomName
     const router = getRoomByName(roomName).router;
 
-    createWebRtcTransport(router).then(
-      (transport) => {
-        callback({
-          params: {
-            id: transport.id,
-            iceParameters: transport.iceParameters,
-            iceCandidates: transport.iceCandidates,
-            dtlsParameters: transport.dtlsParameters,
-          },
-        });
+    try {
+      const transport = await createWebRtcTransport(router);
 
-        // add transport to Peer's properties
-        onTransportCreated(transport, roomName, isConsumer);
-      },
-      (error) => {
-        console.log(error);
-      }
-    );
+      callback({
+        params: {
+          id: transport.id,
+          iceParameters: transport.iceParameters,
+          iceCandidates: transport.iceCandidates,
+          dtlsParameters: transport.dtlsParameters,
+        },
+      });
+
+      // add transport to Peer's properties
+      onTransportCreated(transport, roomName, isConsumer);
+    } catch (e) {
+      console.log(e);
+    }
   });
 
   const onTransportCreated = (transport, roomName, isConsumer) => {
