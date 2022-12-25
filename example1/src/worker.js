@@ -8,6 +8,13 @@ import {
   getPeer,
   joinPeer,
 } from "./peer.js";
+import {
+  addProducer,
+  getProducerIds,
+  getProducers,
+  isProducerExists,
+  removeProducerBySocketId,
+} from "./producer.js";
 import { getRoomByName, removeSocketFromRoom, setRoom } from "./room.js";
 import {
   addTransport,
@@ -26,7 +33,6 @@ import {
  *         |-> Consumer
  **/
 let worker;
-let producers = []; // [ { socketId1, roomName1, producer, }, ... ]
 let consumers = []; // [ { socketId1, roomName1, consumer, }, ... ]
 
 const createWorker = async () => {
@@ -69,8 +75,8 @@ export const handleConnect = async (socket) => {
     // do some cleanup
     console.log("peer disconnected");
     consumers = removeItems(consumers, socket.id, "consumer");
-    producers = removeItems(producers, socket.id, "producer");
 
+    removeProducerBySocketId(socket.id);
     removeTransportBySocketId(socket.id);
 
     const peer = getPeer(socket.id);
@@ -155,9 +161,8 @@ export const handleConnect = async (socket) => {
     addPeerTransport(socket, transport);
   };
 
-  const addProducer = (producer, roomName) => {
-    producers = [...producers, { socketId: socket.id, producer, roomName }];
-
+  const onProducerCreated = (producer, roomName) => {
+    addProducer(socket, producer, roomName);
     addPeerProducer(socket, producer);
   };
 
@@ -171,15 +176,11 @@ export const handleConnect = async (socket) => {
   socket.on("getProducers", (callback) => {
     //return all producer transports
     const { roomName } = getPeer(socket.id);
-
-    let producerList = [];
-    producers.forEach((producerData) => {
-      if (
+    const producerList = getProducerIds((producerData) => {
+      return (
         producerData.socketId !== socket.id &&
         producerData.roomName === roomName
-      ) {
-        producerList = [...producerList, producerData.producer.id];
-      }
+      );
     });
     console.log("getProducers: callback with ", producerList);
     // return the producer list back to the client
@@ -190,15 +191,15 @@ export const handleConnect = async (socket) => {
     console.log(`just joined, id ${id} ${roomName}, ${socketId}`);
     // A new producer just joined
     // let all consumers to consume this producer
+    const producers = getProducers(
+      (producerData) =>
+        producerData.socketId !== socketId && producerData.roomName === roomName
+    );
+
     producers.forEach((producerData) => {
-      if (
-        producerData.socketId !== socketId &&
-        producerData.roomName === roomName
-      ) {
-        const producerSocket = getPeer(producerData.socketId).socket;
-        // use socket to send producer id to producer
-        producerSocket.emit("new-producer", { producerId: id });
-      }
+      const producerSocket = getPeer(producerData.socketId).socket;
+      // use socket to send producer id to producer
+      producerSocket.emit("new-producer", { producerId: id });
     });
   };
 
@@ -222,7 +223,7 @@ export const handleConnect = async (socket) => {
       // add producer to the producers array
       const { roomName } = getPeer(socket.id);
 
-      addProducer(producer, roomName);
+      onProducerCreated(producer, roomName);
 
       informConsumers(roomName, socket.id, producer.id);
 
@@ -236,7 +237,7 @@ export const handleConnect = async (socket) => {
       // Send back to the client the Producer's id
       callback({
         id: producer.id,
-        producersExist: producers.length > 1 ? true : false,
+        producersExist: isProducerExists(),
       });
     }
   );
