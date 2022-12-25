@@ -2,7 +2,7 @@ import express from "express";
 import https from "httpolyglot";
 import path from "path";
 import { Server } from "socket.io";
-import { handleConnect } from "./room/room.js";
+import { handleConnect } from "./src/worker.js";
 import { tlsconfig } from "./config.js";
 
 const __dirname = path.resolve();

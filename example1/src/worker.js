@@ -1,5 +1,6 @@
 import mediasoup from "mediasoup";
 import { mediaCodecs } from "../config.js";
+import { getRoomByName, removeSocketFromRoom, setRoom } from "./room.js";
 
 /**
  * Worker
@@ -10,7 +11,6 @@ import { mediaCodecs } from "../config.js";
  *         |-> Consumer
  **/
 let worker;
-let rooms = {}; // { roomName1: { Router, rooms: [ sicketId1, ... ] }, ...}
 let peers = {}; // { socketId1: { roomName1, socket, transports = [id1, id2,] }, producers = [id1, id2,] }, consumers = [id1, id2,], peerDetails }, ...}
 let transports = []; // [ { socketId1, roomName1, transport, consumer }, ... ]
 let producers = []; // [ { socketId1, roomName1, producer, }, ... ]
@@ -62,13 +62,8 @@ export const handleConnect = async (socket) => {
     if (peers[socket.id]) {
       const { roomName } = peers[socket.id];
       delete peers[socket.id];
-      // remove socket from room
-      rooms[roomName] = {
-        router: rooms[roomName].router,
-        peers: rooms[roomName].peers.filter(
-          (socketId) => socketId !== socket.id
-        ),
-      };
+
+      removeSocketFromRoom(socket, roomName);
     }
   });
 
@@ -102,23 +97,24 @@ export const handleConnect = async (socket) => {
     // mediaCodecs -> defined above
     // appData -> custom application data - we are not supplying any
     // none of the two are required
-    let router1;
+    let router;
     let peers = [];
-    if (rooms[roomName]) {
-      router1 = rooms[roomName].router;
-      peers = rooms[roomName].peers || [];
+    const room = getRoomByName(roomName);
+    if (room !== undefined) {
+      router = room.router;
+      peers = room.peers || [];
     } else {
-      router1 = await worker.createRouter({ mediaCodecs });
+      router = await worker.createRouter({ mediaCodecs });
     }
 
-    console.log(`Router ID: ${router1.id}`, peers.length);
+    console.log(`Router ID: ${router.id}`, peers.length);
 
-    rooms[roomName] = {
-      router: router1,
+    setRoom(roomName, {
+      router: router,
       peers: [...peers, socketId],
-    };
+    });
 
-    return router1;
+    return router;
   };
 
   // Client emits a request to create server side Transport
@@ -128,7 +124,7 @@ export const handleConnect = async (socket) => {
     const roomName = peers[socket.id].roomName;
 
     // get Router (Room) object this peer is in based on RoomName
-    const router = rooms[roomName].router;
+    const router = getRoomByName(roomName).router;
 
     createWebRtcTransport(router).then(
       (transport) => {
@@ -284,7 +280,7 @@ export const handleConnect = async (socket) => {
     ) => {
       try {
         const { roomName } = peers[socket.id];
-        const router = rooms[roomName].router;
+        const router = getRoomByName(roomName).router;
         let consumerTransport = transports.find(
           (transportData) =>
             transportData.consumer &&
